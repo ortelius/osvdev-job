@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/arangodb/go-driver/v2 v2.2.0
 	github.com/google/osv-scanner v1.9.2
-	github.com/ortelius/pdvd-backend/v12 v12.0.519
+	github.com/ortelius/pdvd-backend/v12 v12.0.538
 )
 
 require (
