@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/arangodb/go-driver/v2 v2.2.0
 	github.com/google/osv-scanner v1.9.2
-	github.com/ortelius/ortelius/v12 v12.0.460
+	github.com/ortelius/ortelius/v12 v12.0.463
 )
 
 require (
@@ -14,7 +14,7 @@ require (
 	github.com/kkdai/maglev v0.2.0 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.1 // indirect
+	go.uber.org/zap v1.28.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 )
@@ -28,8 +28,8 @@ require (
 	github.com/goccy/go-yaml v1.19.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.21 // indirect
-	github.com/package-url/packageurl-go v0.1.5 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
+	github.com/package-url/packageurl-go v0.1.6 // indirect
 	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/sys v0.43.0 // indirect
