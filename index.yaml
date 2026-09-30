@@ -2,6 +2,17 @@ apiVersion: v1
 entries:
   osvdev-job:
   - apiVersion: v2
+    appVersion: 12.0.229
+    created: "2026-09-30T01:46:09.581603484Z"
+    description: osv.dev arangodb loader
+    digest: be5763c0ec5f63962254591198402893ccbb19a6b69d114ae599a95cfecd117b
+    icon: https://ortelius.github.io/parent-charts/ortelius.svg
+    name: osvdev-job
+    type: application
+    urls:
+    - https://github.com/ortelius/osvdev-job/releases/download/v12.0.229/osvdev-job-12.0.229.tgz
+    version: 12.0.229
+  - apiVersion: v2
     appVersion: 12.0.228
     created: "2026-08-11T19:16:38.673424951Z"
     description: osv.dev arangodb loader
@@ -133,4 +144,4 @@ entries:
     urls:
     - https://github.com/ortelius/osvdev-job/releases/download/v12.0.217/osvdev-job-12.0.217.tgz
     version: 12.0.217
-generated: "2026-08-11T19:16:38.672963677Z"
+generated: "2026-09-30T01:46:09.581086478Z"
