@@ -34,7 +34,7 @@ http:
   responseHeaderTimeout: "60s"
   requestTimeout: "240s"
   maxAttempts: 3
-  maxBodyMB: 512
+  maxBodyMB: 2048
 
 extraEnv: []
 

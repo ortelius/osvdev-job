@@ -87,7 +87,7 @@ spec:
                 - name: OSV_MAX_ATTEMPTS
                   value: {{ .maxAttempts | default 3 | quote }}
                 - name: OSV_MAX_BODY_MB
-                  value: {{ .maxBodyMB | default 512 | quote }}
+                  value: {{ .maxBodyMB | default 2048 | quote }}
                 {{- end }}
                 {{- with .Values.extraEnv }}
                 {{- toYaml . | nindent 16 }}

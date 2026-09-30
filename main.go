@@ -13,7 +13,6 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -54,7 +53,7 @@ var (
 	responseHeaderTimeout = envDuration("OSV_RESPONSE_HEADER_TIMEOUT", 60*time.Second)
 	perRequestTimeout     = envDuration("OSV_REQUEST_TIMEOUT", 240*time.Second)
 	maxAttempts           = envInt("OSV_MAX_ATTEMPTS", 3)
-	maxBodyBytes          = int64(envInt("OSV_MAX_BODY_MB", 512)) << 20
+	maxBodyBytes          = int64(envInt("OSV_MAX_BODY_MB", 2048)) << 20
 )
 
 func envDuration(key string, def time.Duration) time.Duration {
@@ -119,7 +118,9 @@ func httpGetWithRetry(client *http.Client, urlStr, label string) ([]byte, error)
 			continue
 		}
 
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+		// Read one byte past the cap so truncation is detected instead of
+		// silently returning a partial body.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 		resp.Body.Close()
 		cancel()
 		if err != nil {
@@ -128,12 +129,112 @@ func httpGetWithRetry(client *http.Client, urlStr, label string) ([]byte, error)
 			backoff(attempt)
 			continue
 		}
+		if int64(len(body)) > maxBodyBytes {
+			return nil, fmt.Errorf("%s: response exceeds OSV_MAX_BODY_MB limit (%d MB)", label, maxBodyBytes>>20)
+		}
 
 		logger.Sugar().Debugf("%s: fetched %d bytes in %s (attempt %d)", label, len(body), time.Since(start).Round(time.Millisecond), attempt)
 		return body, nil
 	}
 
 	return nil, fmt.Errorf("%s: all %d attempts failed: %w", label, maxAttempts, lastErr)
+}
+
+// downloadZipWithRetry streams url to a temp file and opens it as a zip.
+//
+// Streaming to disk (rather than io.ReadAll into memory) keeps large
+// ecosystems such as Ubuntu from blowing the pod memory limit, and lets us
+// validate the archive before use. A truncated body (size cap hit, short
+// read vs Content-Length, or an unreadable zip central directory) is treated
+// as a retryable failure instead of surfacing later as
+// "zip: not a valid zip file". The caller must call cleanup() when done.
+func downloadZipWithRetry(client *http.Client, urlStr, label string) (*zip.ReadCloser, func(), error) {
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		start := time.Now()
+
+		zr, cleanup, retry, err := downloadZipOnce(client, urlStr, label)
+		if err == nil {
+			logger.Sugar().Debugf("%s: fetched zip in %s (attempt %d)", label, time.Since(start).Round(time.Millisecond), attempt)
+			return zr, cleanup, nil
+		}
+		if !retry {
+			return nil, nil, err
+		}
+
+		lastErr = err
+		logger.Sugar().Warnf("%s: attempt %d/%d failed after %s: %v", label, attempt, maxAttempts, time.Since(start).Round(time.Millisecond), err)
+		if attempt < maxAttempts {
+			backoff(attempt)
+		}
+	}
+
+	return nil, nil, fmt.Errorf("%s: all %d attempts failed: %w", label, maxAttempts, lastErr)
+}
+
+// downloadZipOnce performs a single attempt. The bool result reports whether
+// a failure is worth retrying.
+func downloadZipOnce(client *http.Client, urlStr, label string) (*zip.ReadCloser, func(), bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), perRequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("%s: build request: %w", label, err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, true, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return nil, nil, false, fmt.Errorf("%s: HTTP %d", label, resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, true, fmt.Errorf("%s: HTTP %d", label, resp.StatusCode)
+	}
+
+	tmp, err := os.CreateTemp("", "osv-*.zip")
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("%s: create temp file: %w", label, err)
+	}
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}
+
+	// One byte past the cap so oversize is detected rather than truncated.
+	n, err := io.Copy(tmp, io.LimitReader(resp.Body, maxBodyBytes+1))
+	if err != nil {
+		cleanup()
+		return nil, nil, true, fmt.Errorf("body read failed after %d bytes: %w", n, err)
+	}
+	if n > maxBodyBytes {
+		cleanup()
+		return nil, nil, false, fmt.Errorf("%s: archive exceeds OSV_MAX_BODY_MB limit (%d MB)", label, maxBodyBytes>>20)
+	}
+	if resp.ContentLength > 0 && n != resp.ContentLength {
+		cleanup()
+		return nil, nil, true, fmt.Errorf("short read: got %d of %d bytes", n, resp.ContentLength)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return nil, nil, true, err
+	}
+
+	zr, err := zip.OpenReader(tmp.Name())
+	if err != nil {
+		os.Remove(tmp.Name())
+		return nil, nil, true, fmt.Errorf("invalid zip (%d bytes received): %w", n, err)
+	}
+
+	return zr, func() {
+		zr.Close()
+		os.Remove(tmp.Name())
+	}, false, nil
 }
 
 func backoff(attempt int) {
@@ -205,7 +306,7 @@ func processEcosystem(client *http.Client, platform string) int {
 
 	start := time.Now()
 
-	body, err := httpGetWithRetry(client, urlStr, platform)
+	zipReader, cleanup, err := downloadZipWithRetry(client, urlStr, platform)
 	if err != nil {
 		// A single bad ecosystem must not abort the run. Skipping it means
 		// the next scheduled tick retries it; hanging here means every
@@ -213,14 +314,9 @@ func processEcosystem(client *http.Client, platform string) int {
 		logger.Sugar().Errorf("Ecosystem: %s | SKIPPED after %s: %v", platform, time.Since(start).Round(time.Millisecond), err)
 		return 0
 	}
+	defer cleanup()
 
 	downloadDur := time.Since(start)
-
-	zipReader, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-	if err != nil {
-		logger.Sugar().Errorf("Failed to open zip reader for %s: %v", platform, err)
-		return 0
-	}
 
 	var maxSeenTime = lastRunTime
 	var cveCount int
