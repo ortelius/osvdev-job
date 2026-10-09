@@ -314,7 +314,23 @@ func LoadFromOSVDev() {
 // ============================================================================
 
 func processEcosystem(client *http.Client, platform string) int {
+	// Stay under the Job's activeDeadlineSeconds so the run exits cleanly
+	// (and lifecycle tracking still runs) instead of being killed.
+	if runBudgetExceeded() {
+		logger.Sugar().Infof("Ecosystem: %s | run budget exhausted, deferring to next run", platform)
+		return 0
+	}
+
 	lastRunTime, _ := util.GetLastRun(dbconn, platform)
+
+	// Incremental path: read <eco>/modified_id.csv and fetch only changed records.
+	// Falls back to all.zip on first load, CSV failure, or very large backlog.
+	if !lastRunTime.IsZero() {
+		if n, handled := processIncremental(client, platform, lastRunTime); handled {
+			return n
+		}
+	}
+
 	urlStr := fmt.Sprintf("https://www.googleapis.com/download/storage/v1/b/osv-vulnerabilities/o/%s%%2Fall.zip?alt=media", url.PathEscape(platform))
 
 	start := time.Now()
@@ -370,17 +386,8 @@ func processEcosystem(client *http.Client, platform string) int {
 				}
 			}
 
-			// Add CVSS scores
-			util.AddCVSSScoresToContent(content)
-
-			wasUpdated, _ := newVuln(content)
-			if wasUpdated {
+			if ingestRecord(content) {
 				cveCount++
-				if cveKey, ok := content["_key"].(string); ok {
-					if err := updateReleaseEdgesForCVE(context.Background(), cveKey); err != nil {
-						logger.Sugar().Errorf("Failed to update release edges for CVE %s: %v", cveKey, err)
-					}
-				}
 			}
 		}()
 	}
