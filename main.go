@@ -284,7 +284,7 @@ func LoadFromOSVDev() {
 		logger.Sugar().Fatal(err)
 	}
 
-	lines := strings.Split(string(body), "")
+	lines := strings.Split(string(body), "\n")
 	totalCVEsUpdated := 0
 
 	for _, line := range lines {
